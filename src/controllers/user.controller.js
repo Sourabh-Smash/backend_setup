@@ -3,7 +3,7 @@ import { ApiError } from "../uitls/ApiError.js";
 import { User } from "../models/user.model.js";
 import { uploadOnCloudinary } from "../uitls/cloudniary.js";
 import { ApiResponse } from "../uitls/ApiResponse.js";
-
+import jwt from "jsonwebtoken";
 const generateRefreshTokenAndAccessToken = async (userId) => {
   try {
     const user = await User.findById(userId);
@@ -117,13 +117,14 @@ const loginUser = asyncHandler(async (req, res) => {
   // send cookies
 
   // receive data from frontend
-  const { username, email, password } = req.body;
-
+  const { email, username, password } = req.body;
+  console.log(req.body);
+  console.log("\n values are : ", username, email, password);
   // vlaidate those inputs
   if (
-    [username, email, password].some((field) => !field || field.trim() === "")
+    [email, username, password].some((field) => !field || field.trim() === "")
   ) {
-    throw new ApiError(400, "Input fiels are empty");
+    throw new ApiError(400, "All fileds are required");
   }
   // check if users exists
   const user = await User.findOne({
@@ -143,9 +144,10 @@ const loginUser = asyncHandler(async (req, res) => {
   const { accessToken, refereshToken } =
     await generateRefreshTokenAndAccessToken(user._id);
 
-  const loggedInUser = await User.findById(user_id).select(
+  const loggedInUser = await User.findById(user._id).select(
     "-password,-refreshToken"
   );
+  console.log(loggedInUser);
   const options = {
     httpOnly: true,
     secure: true,
@@ -184,6 +186,53 @@ const logoutUser = asyncHandler(async (req, res) => {
     .status(200)
     .clearCookie("refreshToken", options)
     .clearCookie("accessToken", options)
-    .json(new ApiResponse(200, "User logged out succesfully"));
+    .json(new ApiResponse(200, {}, "User logged out succesfully"));
 });
-export { registerUser, loginUser, logoutUser };
+
+const generateRefreshToken = asyncHandler(async (req, res) => {
+  const incomingRefreshToken =
+    req.cookies?.refreshToken || req.body?.refreshToken;
+
+  if (!incomingRefreshToken) {
+    throw new ApiError(401, "Refresh token not found");
+  }
+
+  try {
+    const decodeIncomingRefreshToken = jwt.verify(
+      generateRefreshToken,
+      process.env.REFRESH_TOKEN_SECRET
+    );
+
+    const user = await User.findById(decodeIncomingRefreshToken?._id);
+
+    if (!user) {
+      throw new ApiError(401, "Invalid refresh token");
+    }
+
+    if (user?.refereshToken !== decodeIncomingRefreshToken) {
+      throw new ApiError(401, "Refresh token not found login agian");
+    }
+
+    const { accessToken, refereshToken } =
+      await generateRefreshTokenAndAccessToken(user?._id);
+    const options = {
+      httpOnly: true,
+      secure: true,
+    };
+    res
+      .status(200)
+      .cookie("accessToken", accessToken, options)
+      .cookie("refreshToken", refereshToken, options)
+      .json(
+        new ApiResponse(
+          200,
+          { accessToken, refereshToken },
+          "refresh token refreshed sucessuflly"
+        )
+      );
+  } catch (error) {
+    throw new ApiError(401, error?.message || "Invalid refresh token");
+  }
+});
+
+export { registerUser, loginUser, logoutUser, generateRefreshToken };
